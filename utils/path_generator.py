@@ -23,8 +23,10 @@ class Path:
             raise ValueError("start_point must have at least two coordinates")
         if len(end_point) < 2:
             raise ValueError("end_point must have at least two coordinates")
-        self.start = np.array(start_point)
-        self.end = np.array(end_point)
+        self.start = np.array(start_point[:2], dtype=float)
+        self.end = np.array(end_point[:2], dtype=float)
+        if self.start[1] != self.end[1]:
+            raise ValueError("Path currently supports only horizontal lines (start_y == end_y)")
 
     def get_closest_point(
         self, robot_pos: np.ndarray | list[float] | tuple[float, float]
