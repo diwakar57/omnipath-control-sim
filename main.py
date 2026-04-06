@@ -1,9 +1,3 @@
-"""
-OmniPath-DSP: Autonomous Trajectory Tracking Simulation
-Workflow: 
-1. Path Definition -> 2. State Sensing -> 3. PID Calculation -> 4. Physics Update
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -11,75 +5,115 @@ import matplotlib.pyplot as plt
 from models.bicycle_model import BicycleRobot
 from controllers.pid_controller import PIDController
 from utils.path_generator import Path
+from sensors.camera_sensor import CameraSensor
+from sensors.reliability_monitor import ReliabilityMonitor
 
-def run_control_simulation():
-    # --- SECTION 1: HYPERPARAMETERS & CONFIG ---
-    dt = 0.05            # Sampling time (20Hz)
-    total_time = 20.0    # Total simulation seconds
+def run_comparison_simulation():
+    # --- SECTION 1: CONFIG ---
+    dt = 0.05
+    total_time = 25.0 
     steps = int(total_time / dt)
     
     # --- SECTION 2: INITIALIZATION ---
-    # Start robot at y=2.0 (2 meters above the target path)
-    robot = BicycleRobot(x=0.0, y=2.0, theta=0.0, v=2.0, wheelbase=2.5)
+    path = Path(start_point=[0, 0], end_point=[100, 0])
+    camera = CameraSensor(noise_std=0.05)
+    monitor = ReliabilityMonitor(threshold=0.5) 
     
-    # Target Path: A straight line sitting exactly on the X-axis (y=0)
-    target_path = Path(start_point=[0, 0], end_point=[100, 0])
+    # Resilient Robot (Uses Monitor)
+    robot_res = BicycleRobot(x=0.0, y=2.0, theta=0.0, v=2.0, wheelbase=2.5)
+    pid_res = PIDController(kp=0.4, ki=0.02, kd=0.5)
     
-    # PID Gains: 
-    # Kp: Proportional (Initial turn)
-    # Ki: Integral (Corrects steady-state offset)
-    # Kd: Derivative (Dampens the "wobble")
-    pid = PIDController(kp=0.3, ki=0.05, kd=0.8)
+    # Naive Robot (Blindly trusts sensor)
+    robot_naive = BicycleRobot(x=0.0, y=2.0, theta=0.0, v=2.0, wheelbase=2.5)
+    pid_naive = PIDController(kp=0.4, ki=0.02, kd=0.5)
 
-    # Data logging for plotting
-    x_hist, y_hist = [], []
+    # Histories for plotting
+    x_res_hist, y_res_hist = [], []
+    health_hist = []
+    
+    x_naive_hist, y_naive_hist = [], []
+    sensor_naive_hist = [] # To visualize the glitches the naive robot acts upon
 
-    # --- SECTION 3: THE CONTROL LOOP (The "Brain") ---
-    plt.ion() # Interactive mode for real-time animation
-    fig, ax = plt.subplots(figsize=(10, 5))
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    for _ in range(steps):
-        # A. PERCEPTION: Calculate Cross-Track Error (CTE)
-        # How far is the robot (y) from the target path (y=0)?
-        cte = target_path.get_cte([robot.x, robot.y])
+    # --- SECTION 3: THE LOOP ---
+    for t in range(steps):
+        current_time = t * dt
         
-        # B. PLANNING: PID Logic
-        # The controller output is our desired steering angle (delta)
-        steering_cmd = pid.control(cte, dt)
+        # ==========================================
+        #  NAIVE ROBOT PROCESSING
+        # ==========================================
+        # 1. Perception
+        raw_camera_naive = camera.get_measurement(robot_naive.y, current_time)
         
-        # C. ACTUATION LIMITS: Prevent "impossible" steering angles
-        # Real cars can't turn wheels 90 degrees. Limit to ±30°
-        max_steer = np.deg2rad(30.0)
-        steering_cmd = np.clip(steering_cmd, -max_steer, max_steer)
+        # 2. Control (No fault isolation!)
+        cte_naive = path.get_cte([robot_naive.x, raw_camera_naive])
+        steer_naive = pid_naive.control(cte_naive, dt)
+        robot_naive.update(steering_angle=steer_naive, acceleration=0.0, dt=dt)
         
-        # D. PHYSICS: Update the robot state
-        robot.update(steering_angle=steering_cmd, acceleration=0.0, dt=dt)
+        # ==========================================
+        #  RESILIENT ROBOT PROCESSING
+        # ==========================================
+        # A. PREDICTION (Shadow Model)
+        predicted_y = robot_res.y 
 
-        # Log Data
-        x_hist.append(robot.x)
-        y_hist.append(robot.y)
+        # B. PERCEPTION (The "Dirty" Camera)
+        raw_camera_res = camera.get_measurement(robot_res.y, current_time)
+        
+        # C. RELIABILITY MONITOR
+        is_healthy, residual = monitor.check_health(raw_camera_res, predicted_y)
+        
+        # D. FAULT ISOLATION
+        input_y = raw_camera_res if is_healthy else predicted_y
+        
+        # E. CONTROL & PHYSICS
+        cte_res = path.get_cte([robot_res.x, input_y])
+        steer_res = pid_res.control(cte_res, dt)
+        robot_res.update(steering_angle=steer_res, acceleration=0.0, dt=dt)
 
-        # --- SECTION 4: REAL-TIME VISUALIZATION ---
-        ax.clear()
-        # Draw the target goal (Red Dashed Line)
-        ax.axhline(y=0, color='r', linestyle='--', label="Target Path (y=0)")
-        # Draw the actual driven path (Blue Line)
-        ax.plot(x_hist, y_hist, "b-", linewidth=2, label="Robot Trajectory")
-        # Draw the current robot position (Red Dot)
-        ax.plot(robot.x, robot.y, "ro", markersize=8)
+        # ==========================================
+        #  LOGGING
+        # ==========================================
+        x_res_hist.append(robot_res.x)
+        y_res_hist.append(robot_res.y)
+        health_hist.append(is_healthy)
         
-        ax.set_ylim(-3, 3) # Keep focus on the recovery zone
-        ax.set_xlim(0, max(10, robot.x + 5))
-        ax.set_xlabel("X Position [m]")
-        ax.set_ylabel("Y Position [m]")
-        ax.set_title(f"OmniPath-DSP: PID Recovery (CTE: {cte:.2f}m)")
-        ax.legend(loc="upper right")
-        ax.grid(True, alpha=0.3)
-        
-        plt.pause(0.01)
+        x_naive_hist.append(robot_naive.x)
+        y_naive_hist.append(robot_naive.y)
+        sensor_naive_hist.append(raw_camera_naive)
+
+        # --- SECTION 4: VISUALIZATION ---
+        if t % 5 == 0: 
+            ax.clear()
+            # Reference Path
+            ax.axhline(y=0, color='black', linestyle='--', alpha=0.5, label="Target Path")
+            
+            # Raw Sensor Data
+            ax.scatter(x_naive_hist, sensor_naive_hist, color='red', s=4, alpha=0.2, label="Raw Sensor Glitches")
+            
+            # Robot Trajectories
+            ax.plot(x_naive_hist, y_naive_hist, color='orange', linewidth=2, linestyle='--', label="Naive Robot (Fails)")
+            ax.plot(x_res_hist, y_res_hist, color='blue', linewidth=2, label="Resilient Robot (Survives)")
+            
+            # Status Indicator
+            status_color = "green" if is_healthy else "red"
+            status_text = "SENSOR: HEALTHY" if is_healthy else "SENSOR: FAULT DETECTED!"
+            
+            # Dynamic camera following the robots
+            max_x = max(robot_res.x, robot_naive.x)
+            ax.text(max_x - 8, 3.5, status_text, color=status_color, fontweight='bold', fontsize=12)
+
+            ax.set_ylim(-4, 5)
+            ax.set_xlim(max(0, max_x - 15), max(20, max_x + 5))
+            ax.set_title(f"OmniPath-DSP: Naive vs Resilient | Time: {current_time:.1f}s")
+            ax.set_xlabel("X Position (m)")
+            ax.set_ylabel("Y Position (m)")
+            ax.legend(loc="lower left")
+            plt.pause(0.001)
 
     plt.ioff()
     plt.show()
 
 if __name__ == "__main__":
-    run_control_simulation()
+    run_comparison_simulation()

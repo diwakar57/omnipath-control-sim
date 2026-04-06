@@ -28,6 +28,9 @@ class BicycleRobot:
         if dt <= 0:
             raise ValueError("dt must be positive")
 
+        max_steer = 0.6  # ~35 degrees
+        steering_angle = np.clip(steering_angle, -max_steer, max_steer)
+        
         x_dot = self.v * np.cos(self.theta)
         y_dot = self.v * np.sin(self.theta)
         theta_dot = (self.v / self.wheelbase) * np.tan(steering_angle)
