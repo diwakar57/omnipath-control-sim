@@ -8,10 +8,9 @@ import numpy as np
 class Path:
     def __init__(self, start_point, end_point):
         self.start = np.array(start_point)
-        self.end = np.array(end_point)
 
     def get_closest_point(self, robot_pos):
-        # For a straight line along the X-axis (y=0)
+        # For a straight horizontal line at y = start_y
         # The goal is simply the projection of the robot onto the line
         return np.array([robot_pos[0], self.start[1]])
 
