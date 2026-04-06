@@ -29,7 +29,7 @@ def run_control_simulation():
     # Kp: Proportional (Initial turn)
     # Ki: Integral (Corrects steady-state offset)
     # Kd: Derivative (Dampens the "wobble")
-    pid = PIDController(kp=0.6, ki=0.01, kd=0.3)
+    pid = PIDController(kp=0.3, ki=0.05, kd=0.8)
 
     # Data logging for plotting
     x_hist, y_hist = [], []
