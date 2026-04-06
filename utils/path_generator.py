@@ -19,6 +19,10 @@ class Path:
         end_point: np.ndarray | list[float] | tuple[float, float],
     ) -> None:
         """Initialize a straight path using array-like [x, y] endpoints."""
+        if len(start_point) < 2:
+            raise ValueError("start_point must have at least two coordinates")
+        if len(end_point) < 2:
+            raise ValueError("end_point must have at least two coordinates")
         self.start = np.array(start_point)
         self.end = np.array(end_point)
 
